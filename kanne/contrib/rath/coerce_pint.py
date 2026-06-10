@@ -6,7 +6,7 @@ from kanne.scalars import DEFAULT_COERCERS
 
 
 class CoercePintLink(ParsingLink):
-    coercers: Dict[str, Callable[[Any], Awaitable[Any]]] = Field(
+    coercers: Dict[Any, Callable[[Any], Awaitable[Any]]] = Field(
         default=DEFAULT_COERCERS
     )
 

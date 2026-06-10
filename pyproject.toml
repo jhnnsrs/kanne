@@ -49,6 +49,13 @@ docs_base_path = "website/docs"
 ignore_missing_imports = true
 strict = true
 
+# The optional `rath` contrib depends on an untyped third-party library, so we
+# can't subclass its (Any-typed) link classes under strict mode. Scope the
+# relaxation to just that module.
+[[tool.mypy.overrides]]
+module = "kanne.contrib.rath.*"
+disallow_subclassing_any = false
+
 
 
 [tool.semantic_release]

@@ -1,9 +1,11 @@
+from typing import Any
+
 import pint
 
-GLOBAL_REGISTRY = None
+GLOBAL_REGISTRY: "KanneRegistry | None" = None
 
 
-class KanneRegistry(pint.UnitRegistry):
+class KanneRegistry(pint.UnitRegistry[Any]):
     """Custom Pint UnitRegistry for Kanne with predefined units."""
 
 

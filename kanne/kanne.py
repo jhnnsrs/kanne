@@ -1,3 +1,4 @@
+from types import TracebackType
 from typing import Any
 
 from .registry import KanneRegistry
@@ -23,11 +24,16 @@ class Kanne(BaseModel):
     # runtime token for contextvar reset
     _token: Any = None
 
-    def __enter__(self):
+    def __enter__(self) -> "Kanne":
         self._token = set_current_registry(self.registry)
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         # Ensure we always reset the token even if exceptions occur
         if self._token is not None:
             reset_current_registry(self._token)
