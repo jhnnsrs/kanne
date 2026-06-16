@@ -2,30 +2,18 @@ import pytest
 import pint
 from pydantic import BaseModel
 
-from typing import Optional
-
 from kanne.kanne import Kanne
 from kanne.scalars import (
     Duration,
     Frequency,
     Length,
     PintQuantity,
-    DurationCoercible,
 )
 
 
 class Model(BaseModel):
     t: Duration
     f: Frequency
-
-
-class CoercibleModel(BaseModel):
-    """Uses the coercible alias (a plain ``str`` — the wire form) as field input.
-    This is what turms-generated *input* models use: the pint string is passed
-    through to the server, which parses and validates it. No client-side coercion."""
-
-    t: DurationCoercible
-    opt: Optional[DurationCoercible] = None
 
 
 @pytest.fixture(autouse=True)
@@ -153,33 +141,6 @@ def test_explicit_float_conversion_uses_own_unit():
 def test_not_a_float_subclass():
     assert not isinstance(Duration("5 s"), float)
     assert isinstance(Duration("5 s"), PintQuantity)
-
-
-# --- coercible alias field (plain string passthrough; server validates) ----
-
-
-def test_coercible_field_is_a_plain_string():
-    # The alias is a plain ``str`` — the pint string passes through unchanged for
-    # the server to parse. No client-side coercion to a dimension type.
-    m = CoercibleModel(t="2 s")
-    assert m.t == "2 s"
-    assert isinstance(m.t, str)
-
-
-def test_coercible_field_json_schema_is_a_string():
-    schema = CoercibleModel.model_json_schema()
-    assert schema["properties"]["t"]["type"] == "string"
-
-
-def test_coercible_optional_field_default_and_value():
-    assert CoercibleModel(t="1 s").opt is None
-    m = CoercibleModel(t="1 s", opt="3 ms")
-    assert m.opt == "3 ms"
-
-
-def test_coercible_field_serializes_as_pint_string():
-    m = CoercibleModel(t="2 s", opt="3 ms")
-    assert m.model_dump() == {"t": "2 s", "opt": "3 ms"}
 
 
 # --- validate() classmethod -----------------------------------------------

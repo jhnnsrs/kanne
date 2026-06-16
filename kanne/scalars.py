@@ -362,18 +362,15 @@ class Pressure(PintQuantity):
 
 
 # --- Coercible aliases ----------------------------------------------------
-# Stable public names for use as the *input field* annotation (e.g. in turms-generated
-# models)::
+# Stable public names describing what each dimension type accepts as runtime input:
+# a unit-bearing pint string (``"2 s"``), a :class:`pint.Quantity`, or another
+# :class:`PintQuantity`. They are all :data:`CoercibleValue`.
 #
-#     class Op(BaseModel):
-#         exposure: DurationCoercible   # Op(exposure="2 s") — a plain pint string
-#
-# Each is simply ``str`` — the wire form. They are deliberately NOT the dimension type:
-# input is the serialized pint string that travels to the server, and the *server* is
-# responsible for parsing and validating it. We do not coerce or dimension-check on the
-# client here. (The dimension types themselves still validate when used directly as a
-# field type, e.g. ``exposure: Duration``.) The per-dimension names exist so generated
-# code reads intuitively and so the mapping can change in one place later.
+# These are *input typing hints* — e.g. for the signature of a helper that builds a
+# quantity — not Pydantic field annotations: ``CoercibleValue`` is a Union containing
+# ``pint.Quantity``, which has no Pydantic core schema, so a model field annotated with
+# one would fail to build. Use the dimension type directly as a field type
+# (``exposure: Duration``); its validator already accepts a string and coerces it.
 Coercible = CoercibleValue
 
 DurationCoercible = CoercibleValue
