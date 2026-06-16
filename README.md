@@ -31,27 +31,35 @@ Kanne provides a context manager to manage Pint registries easily.
 
 
 
+Fields are typed by **physical dimension** (`Duration`, `Length`, …), not by a fixed
+unit. A field accepts *any* unit-bearing value of the right dimension, preserves the
+unit you gave it, and serializes to an abbreviated **pint string** that the matching
+server library parses back. A bare number (no unit) is rejected, and so is a value of
+the wrong dimension.
+
 ```python
 
-# Global Pattern
-from kanne import Kanne, Millisecond, Millimeter, define_unit
+from kanne.kanne import Kanne
+from kanne import Duration, Length
+from kanne.registry import KanneRegistry
 from pydantic import BaseModel
 
 
 class Event(BaseModel):
-    duration: Millisecond
-
-class OtherEvent(BaseModel):
-    length: Millimeter
+    duration: Duration   # any time quantity
+    extent: Length       # any spatial length
 
 
-Event(duration="1500 ms")  # works fine
-OtherEvent(length="1500 mm")  # raises a validation error
-event = Event(duration="1500 ms")  # works fine
-other = OtherEvent(length="1500 mm")  # raises a validation error
+with Kanne(registry=KanneRegistry()):
+    event = Event(duration="1500 ms", extent="2.5 um")
 
+    event.model_dump()       # {'duration': '1500 ms', 'extent': '2.5 µm'} — unit preserved
+    event.duration.to("s")   # <Quantity(1.5, 'second')>
 
-event.duration + other.length  # raises an error since they are not compatible
+    Event(duration="3 m", extent="1 m")   # raises — a length is not a duration
+    Event(duration=1500, extent="1 m")    # raises — bare numbers are ambiguous
 
+    # arithmetic stays dimensionful
+    event.duration + event.extent          # raises — incompatible dimensions
 ```
 

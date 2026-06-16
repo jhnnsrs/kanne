@@ -6,119 +6,126 @@ from pydantic_core import CoreSchema, core_schema
 
 from kanne.vars import get_current_registry
 
-_S = TypeVar("_S", bound="PintScalar")
+_Q = TypeVar("_Q", bound="PintQuantity")
 
-#: Anything that can be coerced into a scalar at runtime: a number (assumed to
-#: already be in the scalar's unit), a unit string Pint can parse (``"2 s"``), an
-#: existing :class:`pint.Quantity`, or another :class:`PintScalar`.
-CoercibleValue = Union[float, int, str, "pint.Quantity[Any]", "PintScalar"]
+#: Anything that can be coerced into a dimension quantity at runtime: a unit-bearing
+#: string Pint can parse (``"2 s"``), an existing :class:`pint.Quantity`, or another
+#: :class:`PintQuantity`. A bare number is intentionally *not* coercible — without a
+#: unit it is dimensionless and ambiguous.
+CoercibleValue = Union[str, "pint.Quantity[Any]", "PintQuantity"]  # pyright: ignore[reportUnknownVariableType]
 
 
-def unit_validator(target_unit: str) -> Callable[[Any], float]:
-    """Return a validator that coerces any *coercible* value into the float
-    magnitude expressed in ``target_unit``.
+def _to_quantity(v: Any, cls: "type[PintQuantity]") -> "pint.Quantity[Any]":  # noqa: ANN401
+    """Coerce a *coercible* value into a :class:`pint.Quantity` of the dimension
+    declared by ``cls``, preserving whatever unit the value carries.
 
-    Kept as a standalone helper; the :class:`PintScalar` subclasses use the same
-    coercion rules.
+    Coercible inputs are: a :class:`PintQuantity`, an existing
+    :class:`pint.Quantity`, or a unit-bearing string Pint can parse (``"1 mm"``).
+    A bare number is rejected — there is no canonical unit to attach it to.
     """
-
-    def validate(v: Any) -> float:  # noqa: ANN401
-        return _to_magnitude(v, target_unit)
-
-    return validate
-
-
-def _to_magnitude(v: Any, target_unit: str) -> float:  # noqa: ANN401
-    """Coerce a *coercible* value to a plain float magnitude in ``target_unit``.
-
-    Coercible inputs are: a :class:`PintScalar`, an existing
-    :class:`pint.Quantity`, a string Pint can parse (``"1 mm"``), or a number
-    (assumed to already be in ``target_unit``).
-    """
-    if isinstance(v, PintScalar):
-        return float(v.to(target_unit).magnitude)
-    if isinstance(v, pint.Quantity):
-        return float(v.to(target_unit).magnitude)
-    if isinstance(v, str):
-        return float(get_current_registry()(v).to(target_unit).magnitude)
-    if isinstance(v, (int, float)):
-        return float(v)
-    raise ValueError(f"Invalid input format for {target_unit}: {v!r}")
+    registry = get_current_registry()
+    if isinstance(v, PintQuantity):
+        q: "pint.Quantity[Any]" = v._quantity
+    elif isinstance(v, pint.Quantity):
+        q = v
+    elif isinstance(v, str):
+        q = registry(v)
+    else:
+        raise ValueError(
+            f"Invalid input for {cls.__name__}: {v!r}. Pass a unit-bearing string "
+            f'(e.g. "2 s"), a pint.Quantity, or another PintQuantity — not a bare number.'
+        )
+    expected = registry.get_dimensionality(cls.reference_unit)
+    if q.dimensionality != expected:
+        raise ValueError(
+            f"{v!r} has dimensionality {q.dimensionality} but {cls.__name__} "
+            f"requires {expected}"
+        )
+    return q
 
 
 def _as_operand(value: Any) -> Any:  # noqa: ANN401
-    """Promote a :class:`PintScalar` to a real ``pint.Quantity`` for arithmetic;
+    """Promote a :class:`PintQuantity` to a real ``pint.Quantity`` for arithmetic;
     leave everything else (numbers, quantities) untouched so Pint handles it."""
-    if isinstance(value, PintScalar):
+    if isinstance(value, PintQuantity):
         return value.quantity
     return value
 
 
-class PintScalar:
-    """A dimensionful scalar.
+class PintQuantity:
+    """A dimensionful quantity constrained to a single physical *dimension*.
 
-    It is a thin wrapper around a single ``float`` *magnitude* expressed in
-    :attr:`unit`. For Pydantic (and therefore turms / JSON) it presents as an
-    ordinary number: it validates from a number/string/quantity and serializes
-    back to a float.
+    Unlike a unit-pegged scalar, a ``PintQuantity`` subclass is not tied to one
+    unit: it accepts *any* value of the right dimensionality and preserves the unit
+    it was given. The dimension is declared via :attr:`reference_unit` — a unit
+    whose dimensionality defines what the type accepts (it is never used as a
+    conversion target)::
 
-    At runtime it is dimensionful — arithmetic and comparison operators promote
-    it to a real :class:`pint.Quantity` (using the registry bound to the current
-    context)::
+        Duration("5 ms")              # <Quantity(5, 'millisecond')>, unit preserved
+        Duration("1 hour")            # <Quantity(1, 'hour')>
+        Duration("3 m")               # raises — wrong dimension
+        Duration(5)                   # raises — bare numbers are ambiguous
 
-        ms = Millisecond(5)            # magnitude 5.0, unit "millisecond"
-        float(ms)                      # 5.0 — what gets serialized
-        ms + Second(1)                 # <Quantity(1005.0, 'millisecond')>
-        (ms * 2).to("second")          # <Quantity(0.01, 'second')>
-        Millisecond(1000) == Second(1) # True — compared dimensionfully
+    For Pydantic (and therefore turms / JSON) it presents as a **string**: it
+    validates from a unit-bearing pint string and serializes back to one (abbreviated
+    pint format, e.g. ``"5 ms"``), so the matching server library can parse it back
+    into a real quantity.
 
-    Unlike a ``float`` subclass this is *not* substitutable for ``float``: pass
-    it to a ``float``-typed API via :func:`float` or :attr:`magnitude` so the
-    conversion (and any dimension loss) is explicit.
+    At runtime it is dimensionful — arithmetic and comparison operators promote it to
+    a real :class:`pint.Quantity` (using the registry bound to the current context)::
+
+        Duration("5 ms") + Duration("1 s")        # <Quantity(1005.0, 'millisecond')>
+        (Duration("2 s") * 2).to("second")        # <Quantity(4.0, 'second')>
+        Duration("1000 ms") == Duration("1 s")    # True — compared dimensionfully
     """
 
-    #: The unit this scalar's magnitude is expressed in. Subclasses must set it.
-    unit: ClassVar[str] = ""
+    #: A unit whose *dimensionality* defines what this type accepts. Subclasses must
+    #: set it. It is NOT a conversion target — values keep the unit they were given.
+    reference_unit: ClassVar[str] = ""
 
-    __slots__ = ("_magnitude",)
+    __slots__ = ("_quantity",)
 
-    def __init__(self, value: "float | PintScalar | pint.Quantity[Any] | str") -> None:
-        self._magnitude = _to_magnitude(value, self.unit)
+    def __init__(self, value: "CoercibleValue") -> None:
+        self._quantity: "pint.Quantity[Any]" = _to_quantity(value, type(self))
 
     def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: ANN401
         super().__init_subclass__(**kwargs)
-        if not cls.unit:
-            raise TypeError(f"{cls.__name__} must define a non-empty `unit`")
+        if not cls.reference_unit:
+            raise TypeError(f"{cls.__name__} must define a non-empty `reference_unit`")
 
     # -- numeric / pint bridge -----------------------------------------
     @property
-    def magnitude(self) -> float:
-        """The raw float magnitude in :attr:`unit`."""
-        return self._magnitude
+    def quantity(self) -> "pint.Quantity[Any]":
+        """This value as a real :class:`pint.Quantity`, in its own unit."""
+        return self._quantity
 
     @property
-    def quantity(self) -> "pint.Quantity[Any]":
-        """This scalar as a real :class:`pint.Quantity` in :attr:`unit`."""
-        return get_current_registry().Quantity(self._magnitude, self.unit)
+    def magnitude(self) -> float:
+        """The raw magnitude, in the value's own unit."""
+        return float(self._quantity.magnitude)
 
     def to(self, unit: str) -> "pint.Quantity[Any]":
         """Convert to ``unit`` and return a :class:`pint.Quantity`."""
-        return self.quantity.to(unit)
+        return self._quantity.to(unit)
+
+    def to_pint_string(self) -> str:
+        """Render as an abbreviated pint string (the wire form), e.g. ``"5 ms"``."""
+        return f"{self._quantity:~}"
 
     def __float__(self) -> float:
-        return self._magnitude
+        return float(self._quantity.magnitude)
 
     def __int__(self) -> int:
-        return int(self._magnitude)
+        return int(self._quantity.magnitude)
 
     def __bool__(self) -> bool:
-        return bool(self._magnitude)
+        return bool(self._quantity.magnitude)
 
     def __hash__(self) -> int:
-        return hash((type(self).unit, self._magnitude))
+        return hash((type(self).reference_unit, self._quantity))
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}({self._magnitude!r})"
+        return f"{type(self).__name__}({self.to_pint_string()!r})"
 
     # -- pydantic ------------------------------------------------------
     @classmethod
@@ -127,46 +134,49 @@ class PintScalar:
         source_type: Any,  # noqa: ANN401
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
-        """Validate from any coercible value into ``cls`` and serialize to float.
+        """Validate from a unit-bearing pint string into ``cls`` and serialize back
+        to an abbreviated pint string.
 
-        The schema is built on a ``float`` core schema so the field is a plain
-        ``number`` in the generated JSON schema (what turms expects).
+        The wire form is a ``string``: the generated JSON schema is a ``string`` (what
+        turms expects) and JSON input must be a string — bare numbers are rejected. In
+        Python an existing :class:`pint.Quantity` or :class:`PintQuantity` is also
+        accepted.
         """
-        return core_schema.no_info_after_validator_function(
-            cls,
-            core_schema.no_info_before_validator_function(
-                cls._coerce_magnitude,
-                core_schema.float_schema(),
+        ser = core_schema.plain_serializer_function_ser_schema(
+            lambda q: q.to_pint_string(),
+            return_schema=core_schema.str_schema(),
+            when_used="always",
+        )
+        return core_schema.json_or_python_schema(
+            json_schema=core_schema.no_info_after_validator_function(
+                cls._coerce, core_schema.str_schema()
             ),
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                float, return_schema=core_schema.float_schema()
+            python_schema=core_schema.no_info_before_validator_function(
+                cls._coerce, core_schema.any_schema()
             ),
+            serialization=ser,
         )
 
     @classmethod
-    def _coerce_magnitude(cls, v: Any) -> float:  # noqa: ANN401
-        return _to_magnitude(v, cls.unit)
+    def _coerce(cls: type[_Q], v: Any) -> _Q:  # noqa: ANN401
+        return v if isinstance(v, cls) else cls(v)
 
     @classmethod
-    def validate(cls: type[_S], value: CoercibleValue) -> _S:
-        """Coerce any *coercible* value into an instance of this scalar.
+    def validate(cls: type[_Q], value: CoercibleValue) -> _Q:
+        """Coerce any *coercible* value into an instance of this dimension type.
 
-        Accepts a number (assumed to be in :attr:`unit`), a unit string
-        (``"2 s"``), a :class:`pint.Quantity`, or another :class:`PintScalar`;
-        the result is always an instance of ``cls`` with its magnitude in
-        :attr:`unit`::
+        Accepts a unit-bearing string (``"2 s"``), a :class:`pint.Quantity`, or
+        another :class:`PintQuantity`; the unit is preserved and the dimensionality
+        is checked. This is the same coercion Pydantic applies, exposed for use
+        outside a model (and as the hook turms can call)::
 
-            Millisecond.validate(5)                 # Millisecond(5.0)
-            Millisecond.validate("2 s")             # Millisecond(2000.0)
-            Millisecond.validate(Second(1))         # Millisecond(1000.0)
-
-        This is the same coercion Pydantic applies, exposed for use outside a
-        model (and as the hook turms can call to build the scalar).
+            Duration.validate("2 s")          # Duration("2 s")
+            Duration.validate("3 m")          # raises — wrong dimension
         """
         return cls(value)
 
     # -- arithmetic (returns dimensionful pint.Quantity) ---------------
-    def __add__(self, other: Any) -> "pint.Quantity[Any]":  # noqa: ANN401
+    def __add__(self, other: Any) -> "pint.Quantity[Any]":  # pyright: ignore[reportUnknownMemberType] # noqa: ANN401
         return self.quantity + _as_operand(other)
 
     def __radd__(self, other: Any) -> "pint.Quantity[Any]":  # noqa: ANN401
@@ -204,175 +214,223 @@ class PintScalar:
 
     # -- comparisons (dimensionful against quantity-like operands) -----
     def __eq__(self, other: object) -> bool:
-        if isinstance(other, (PintScalar, pint.Quantity)):
+        if isinstance(other, (PintQuantity, pint.Quantity)):
             return bool(self.quantity == _as_operand(other))
-        if isinstance(other, (int, float)):
-            return self._magnitude == other
         return NotImplemented
 
     def __ne__(self, other: object) -> bool:
         result = self.__eq__(other)
         if result is NotImplemented:
-            return result
+            return NotImplemented
         return not result
 
     def __lt__(self, other: Any) -> bool:  # noqa: ANN401
-        if isinstance(other, (PintScalar, pint.Quantity)):
-            return bool(self.quantity < _as_operand(other))
-        return self._magnitude < other
+        return bool(self.quantity < _as_operand(other))
 
     def __le__(self, other: Any) -> bool:  # noqa: ANN401
-        if isinstance(other, (PintScalar, pint.Quantity)):
-            return bool(self.quantity <= _as_operand(other))
-        return self._magnitude <= other
+        return bool(self.quantity <= _as_operand(other))
 
     def __gt__(self, other: Any) -> bool:  # noqa: ANN401
-        if isinstance(other, (PintScalar, pint.Quantity)):
-            return bool(self.quantity > _as_operand(other))
-        return self._magnitude > other
+        return bool(self.quantity > _as_operand(other))
 
     def __ge__(self, other: Any) -> bool:  # noqa: ANN401
-        if isinstance(other, (PintScalar, pint.Quantity)):
-            return bool(self.quantity >= _as_operand(other))
-        return self._magnitude >= other
+        return bool(self.quantity >= _as_operand(other))
 
 
 # Backwards-compatible alias for the original base-class name.
-PintQuantity = PintScalar
+PintScalar = PintQuantity
 
 
-# --- Concrete unit scalars ------------------------------------------------
-# Each is a real, importable class so turms can reference it by name.
+# --- Concrete dimension types ---------------------------------------------
+# Each is a real, importable class so turms can reference it by name. Adding a new
+# dimension is a one-liner: subclass and set `reference_unit` to any unit of that
+# dimension (its *dimensionality* — not the unit itself — is what gets enforced).
 
 
-class Millisecond(PintScalar):
-    """Scalar whose magnitude is expressed in milliseconds."""
+class Duration(PintQuantity):
+    """A quantity of time (``"5 ms"``, ``"2 s"``, ``"1 hour"``)."""
 
-    unit = "millisecond"
-
-
-class Second(PintScalar):
-    """Scalar whose magnitude is expressed in seconds."""
-
-    unit = "second"
+    reference_unit = "second"
 
 
-class Micrometer(PintScalar):
-    """Scalar whose magnitude is expressed in micrometers."""
+class Frequency(PintQuantity):
+    """A quantity of frequency (``"50 Hz"``, ``"1 kHz"``)."""
 
-    unit = "micrometer"
-
-
-class Microliter(PintScalar):
-    """Scalar whose magnitude is expressed in microliters."""
-
-    unit = "microliter"
+    reference_unit = "hertz"
 
 
-class Milliliter(PintScalar):
-    """Scalar whose magnitude is expressed in milliliters."""
+class Length(PintQuantity):
+    """A spatial length (``"2.5 µm"``, ``"1 mm"``, ``"3 m"``)."""
 
-    unit = "milliliter"
-
-
-class Microgram(PintScalar):
-    """Scalar whose magnitude is expressed in micrograms."""
-
-    unit = "microgram"
+    reference_unit = "meter"
 
 
-class Milligram(PintScalar):
-    """Scalar whose magnitude is expressed in milligrams."""
+class Area(PintQuantity):
+    """An area (``"4 µm ** 2"``, ``"2 mm^2"``)."""
 
-    unit = "milligram"
-
-
-class Gram(PintScalar):
-    """Scalar whose magnitude is expressed in grams."""
-
-    unit = "gram"
+    reference_unit = "meter ** 2"
 
 
-class Kilogram(PintScalar):
-    """Scalar whose magnitude is expressed in kilograms."""
+class Volume(PintQuantity):
+    """A volume (``"5 µL"``, ``"2 mL"``)."""
 
-    unit = "kilogram"
-
-
-class Hertz(PintScalar):
-    """Scalar whose magnitude is expressed in hertz."""
-
-    unit = "hertz"
+    reference_unit = "liter"
 
 
-class Ampere(PintScalar):
-    """Scalar whose magnitude is expressed in amperes."""
+class Velocity(PintQuantity):
+    """A velocity / speed (``"3 µm/s"``, ``"2 m/s"``)."""
 
-    unit = "ampere"
+    reference_unit = "meter / second"
 
 
-class Picoampere(PintScalar):
-    """Scalar whose magnitude is expressed in picoamperes."""
+class Mass(PintQuantity):
+    """A mass (``"5 mg"``, ``"2 kg"``)."""
 
-    unit = "picoampere"
+    reference_unit = "gram"
+
+
+class Temperature(PintQuantity):
+    """A temperature (``"310 K"``, ``"37 degC"``)."""
+
+    reference_unit = "kelvin"
+
+
+class AmountOfSubstance(PintQuantity):
+    """An amount of substance (``"5 mmol"``, ``"2 mol"``)."""
+
+    reference_unit = "mole"
+
+
+class Concentration(PintQuantity):
+    """A molar concentration (``"5 nM"``, ``"2 µM"``, ``"1 mM"``)."""
+
+    reference_unit = "molar"
+
+
+class ElectricCurrent(PintQuantity):
+    """An electric current (``"5 pA"``, ``"2 nA"``)."""
+
+    reference_unit = "ampere"
+
+
+class ElectricPotential(PintQuantity):
+    """An electric potential / voltage (``"-70 mV"``, ``"5 V"``)."""
+
+    reference_unit = "volt"
+
+
+class ElectricCharge(PintQuantity):
+    """An electric charge (``"5 pC"``, ``"2 nC"``)."""
+
+    reference_unit = "coulomb"
+
+
+class Capacitance(PintQuantity):
+    """A capacitance (``"5 pF"``, ``"100 nF"``)."""
+
+    reference_unit = "farad"
+
+
+class ElectricalConductance(PintQuantity):
+    """An electrical conductance (``"5 nS"``, ``"2 µS"``)."""
+
+    reference_unit = "siemens"
+
+
+class ElectricalResistance(PintQuantity):
+    """An electrical resistance (``"100 MΩ"``, ``"5 GΩ"``)."""
+
+    reference_unit = "ohm"
+
+
+class Power(PintQuantity):
+    """A power (``"5 mW"``, ``"2 W"``)."""
+
+    reference_unit = "watt"
+
+
+class Energy(PintQuantity):
+    """An energy (``"5 mJ"``, ``"2 J"``)."""
+
+    reference_unit = "joule"
+
+
+class Pressure(PintQuantity):
+    """A pressure (``"5 kPa"``, ``"2 bar"``)."""
+
+    reference_unit = "pascal"
 
 
 # --- Coercible aliases ----------------------------------------------------
-# Use these as the *field / input* annotation (e.g. in turms-generated models)
-# so model construction accepts a coercible value directly::
+# Stable public names for use as the *input field* annotation (e.g. in turms-generated
+# models)::
 #
 #     class Op(BaseModel):
-#         exposure: MillisecondCoercible   # Op(exposure=5) and Op(exposure="2 s")
-#                                           # both type-check and coerce to Millisecond
+#         exposure: DurationCoercible   # Op(exposure="2 s") — a plain pint string
 #
-# These are field-usable: every member has a Pydantic core schema, and Pydantic's
-# smart union coerces the input to the scalar at runtime (verified). A read of the
-# field is typed as the union — narrow with ``cast`` if you need the scalar type.
-# A real ``pint.Quantity`` is intentionally *not* a member (it has no core schema
-# and would break field generation); pass one as ``Millisecond(quantity)`` or rely
-# on the scalar's own validator, which still accepts a Quantity at runtime.
-Coercible = Union[float, int, str, PintScalar]
+# Each is simply ``str`` — the wire form. They are deliberately NOT the dimension type:
+# input is the serialized pint string that travels to the server, and the *server* is
+# responsible for parsing and validating it. We do not coerce or dimension-check on the
+# client here. (The dimension types themselves still validate when used directly as a
+# field type, e.g. ``exposure: Duration``.) The per-dimension names exist so generated
+# code reads intuitively and so the mapping can change in one place later.
+Coercible = CoercibleValue
 
-MillisecondCoercible = Union[Millisecond, float, int, str]
-SecondCoercible = Union[Second, float, int, str]
-MicrometerCoercible = Union[Micrometer, float, int, str]
-MicroliterCoercible = Union[Microliter, float, int, str]
-MilliliterCoercible = Union[Milliliter, float, int, str]
-MicrogramCoercible = Union[Microgram, float, int, str]
-MilligramCoercible = Union[Milligram, float, int, str]
-GramCoercible = Union[Gram, float, int, str]
-KilogramCoercible = Union[Kilogram, float, int, str]
-HertzCoercible = Union[Hertz, float, int, str]
-AmpereCoercible = Union[Ampere, float, int, str]
-PicoampereCoercible = Union[Picoampere, float, int, str]
+DurationCoercible = CoercibleValue
+FrequencyCoercible = CoercibleValue
+LengthCoercible = CoercibleValue
+AreaCoercible = CoercibleValue
+VolumeCoercible = CoercibleValue
+VelocityCoercible = CoercibleValue
+MassCoercible = CoercibleValue
+TemperatureCoercible = CoercibleValue
+AmountOfSubstanceCoercible = CoercibleValue
+ConcentrationCoercible = CoercibleValue
+ElectricCurrentCoercible = CoercibleValue
+ElectricPotentialCoercible = CoercibleValue
+ElectricChargeCoercible = CoercibleValue
+CapacitanceCoercible = CoercibleValue
+ElectricalConductanceCoercible = CoercibleValue
+ElectricalResistanceCoercible = CoercibleValue
+PowerCoercible = CoercibleValue
+EnergyCoercible = CoercibleValue
+PressureCoercible = CoercibleValue
 
 
 # --- Serialization helpers (used by the rath contrib link) ----------------
 
 
-def serialize_quantity(unit: str) -> Callable[[PintScalar], Awaitable[float]]:
-    """Build an async serializer that renders a scalar as its float magnitude
-    in ``unit`` (e.g. for sending GraphQL variables)."""
-
-    async def aserialize_quantity(q: PintScalar) -> float:
-        return float(q.to(unit).magnitude)
-
-    return aserialize_quantity
+async def aserialize_pint(q: PintQuantity) -> str:
+    """Render a dimension quantity as its abbreviated pint string for the wire
+    (e.g. when sending GraphQL variables). The unit is preserved."""
+    return q.to_pint_string()
 
 
 Coercer = Callable[[Any], Awaitable[Any]]
 
+#: Map every dimension type to the shared string serializer. Serialization no longer
+#: depends on a target unit, so they all share :func:`aserialize_pint`.
 DEFAULT_COERCERS: dict[Any, Coercer] = {
-    Millisecond: serialize_quantity("millisecond"),
-    Second: serialize_quantity("second"),
-    Micrometer: serialize_quantity("micrometer"),
-    Microliter: serialize_quantity("microliter"),
-    Milliliter: serialize_quantity("milliliter"),
-    Microgram: serialize_quantity("microgram"),
-    Milligram: serialize_quantity("milligram"),
-    Gram: serialize_quantity("gram"),
-    Kilogram: serialize_quantity("kilogram"),
-    Hertz: serialize_quantity("hertz"),
-    Ampere: serialize_quantity("ampere"),
-    Picoampere: serialize_quantity("picoampere"),
+    cls: aserialize_pint
+    for cls in (
+        Duration,
+        Frequency,
+        Length,
+        Area,
+        Volume,
+        Velocity,
+        Mass,
+        Temperature,
+        AmountOfSubstance,
+        Concentration,
+        ElectricCurrent,
+        ElectricPotential,
+        ElectricCharge,
+        Capacitance,
+        ElectricalConductance,
+        ElectricalResistance,
+        Power,
+        Energy,
+        Pressure,
+    )
 }

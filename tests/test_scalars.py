@@ -6,25 +6,26 @@ from typing import Optional
 
 from kanne.kanne import Kanne
 from kanne.scalars import (
-    Millisecond,
-    Second,
-    Hertz,
-    PintScalar,
-    MillisecondCoercible,
+    Duration,
+    Frequency,
+    Length,
+    PintQuantity,
+    DurationCoercible,
 )
 
 
 class Model(BaseModel):
-    t: Millisecond
-    f: Hertz
+    t: Duration
+    f: Frequency
 
 
 class CoercibleModel(BaseModel):
-    """Uses the coercible union so construction accepts raw values directly
-    (this is what turms-generated models should use for the field type)."""
+    """Uses the coercible alias (a plain ``str`` — the wire form) as field input.
+    This is what turms-generated *input* models use: the pint string is passed
+    through to the server, which parses and validates it. No client-side coercion."""
 
-    t: MillisecondCoercible
-    opt: Optional[MillisecondCoercible] = None
+    t: DurationCoercible
+    opt: Optional[DurationCoercible] = None
 
 
 @pytest.fixture(autouse=True)
@@ -39,163 +40,169 @@ def _registry():
 # --- validation / coercion ------------------------------------------------
 
 
-def test_validates_from_number_assumed_in_unit():
-    m = Model(t=Millisecond(5), f=Hertz(10))
-    assert m.t.magnitude == 5.0
-    assert m.t.unit == "millisecond"
-    assert m.f.magnitude == 10.0
-
-
-def test_validates_from_string_and_converts_unit():
+def test_validates_from_string_preserving_unit():
     m = Model(t="2 s", f="1 kHz")
-    assert m.t.magnitude == pytest.approx(2000.0)  # 2 s -> 2000 ms
-    assert m.f.magnitude == pytest.approx(1000.0)  # 1 kHz -> 1000 Hz
+    assert m.t.to("second").magnitude == pytest.approx(2.0)
+    assert m.t.magnitude == pytest.approx(2.0)  # unit preserved: still seconds
+    assert str(m.t.quantity.units) == "second"
+    assert m.f.to("hertz").magnitude == pytest.approx(1000.0)
 
 
-def test_validates_from_quantity_and_converts_unit(_registry):
+def test_validates_from_quantity_preserving_unit(_registry):
     q = pint.Quantity(3, "second")
-    m = Model(t=q, f=5)
-    assert m.t.magnitude == pytest.approx(3000.0)
+    m = Model(t=q, f="5 Hz")
+    assert m.t.to("millisecond").magnitude == pytest.approx(3000.0)
+    assert str(m.t.quantity.units) == "second"
 
 
-def test_validates_from_another_scalar():
-    m = Model(t=Second(1), f=5)
-    assert m.t.magnitude == pytest.approx(1000.0)
+def test_validates_from_another_quantity_type():
+    m = Model(t=Duration("1 s"), f="5 Hz")
+    assert m.t.to("millisecond").magnitude == pytest.approx(1000.0)
+
+
+def test_bare_number_is_rejected():
+    with pytest.raises(Exception):
+        Model(t=5, f="5 Hz")
+    with pytest.raises(Exception):
+        Duration(5)
+
+
+def test_wrong_dimension_is_rejected():
+    # A length is not a duration.
+    with pytest.raises(Exception):
+        Model(t="3 m", f="5 Hz")
+    with pytest.raises(Exception):
+        Duration("3 m")
 
 
 def test_invalid_input_raises():
     with pytest.raises(Exception):
-        Model(t=object(), f=5)
+        Model(t=object(), f="5 Hz")
 
 
-def test_subclass_without_unit_is_rejected():
+def test_subclass_without_reference_unit_is_rejected():
     with pytest.raises(TypeError):
 
-        class Bad(PintScalar):
+        class Bad(PintQuantity):
             pass
 
 
 # --- pydantic round-trip / serialization ----------------------------------
 
 
-def test_serializes_as_plain_float():
-    m = Model(t="2 s", f=5)
-    assert m.model_dump() == {"t": 2000.0, "f": 5.0}
+def test_serializes_as_pint_string():
+    m = Model(t="2 s", f="1 kHz")
+    assert m.model_dump() == {"t": "2 s", "f": "1 kHz"}
 
 
-def test_json_schema_is_a_number():
+def test_serialization_preserves_input_unit():
+    # The unit the user supplied round-trips — no normalization.
+    assert Model(t="1 hour", f="50 Hz").model_dump() == {"t": "1 h", "f": "50 Hz"}
+
+
+def test_json_schema_is_a_string():
     schema = Model.model_json_schema()
-    assert schema["properties"]["t"]["type"] == "number"
-    assert schema["properties"]["f"]["type"] == "number"
+    assert schema["properties"]["t"]["type"] == "string"
+    assert schema["properties"]["f"]["type"] == "string"
 
 
 def test_round_trip_through_dump_and_validate():
-    m = Model(t="2 s", f=5)
+    m = Model(t="2 s", f="5 Hz")
     again = Model.model_validate(m.model_dump())
     assert again.t == m.t
-    assert again.t.magnitude == pytest.approx(2000.0)
+    assert again.t.to("second").magnitude == pytest.approx(2.0)
+
+
+def test_round_trip_through_json():
+    m = Model(t="1500 ms", f="1 kHz")
+    again = Model.model_validate_json(m.model_dump_json())
+    assert again.t == m.t
+    assert again.f == m.f
 
 
 # --- dimensionful runtime behavior ----------------------------------------
 
 
 def test_addition_is_dimensionful():
-    result = Millisecond(5) + Second(1)
+    result = Duration("5 ms") + Duration("1 s")
     assert isinstance(result, pint.Quantity)
     assert result.to("millisecond").magnitude == pytest.approx(1005.0)
 
 
 def test_multiplication_and_conversion():
-    result = (Millisecond(2000) * 2).to("second")
+    result = (Duration("2000 ms") * 2).to("second")
     assert result.magnitude == pytest.approx(4.0)
 
 
 def test_cross_unit_equality_compares_dimensionfully():
-    assert Millisecond(1000) == Second(1)
-    assert Millisecond(500) < Second(1)
-    assert Second(1) > Millisecond(500)
+    assert Duration("1000 ms") == Duration("1 s")
+    assert Duration("500 ms") < Duration("1 s")
+    assert Duration("1 s") > Duration("500 ms")
 
 
-def test_equality_against_plain_number_uses_magnitude():
-    assert Millisecond(5) == 5.0
-    assert Millisecond(5) != 6.0
+def test_equality_against_bare_number_is_not_equal():
+    # No canonical unit to compare a bare number against.
+    assert (Duration("5 s") == 5.0) is False
 
 
-def test_explicit_float_conversion():
-    assert float(Millisecond(5)) == 5.0
-    assert int(Millisecond(5)) == 5
+def test_explicit_float_conversion_uses_own_unit():
+    assert float(Duration("5 s")) == 5.0
+    assert int(Duration("5 s")) == 5
 
 
 def test_not_a_float_subclass():
-    # The standalone design intentionally is NOT substitutable for float.
-    assert not isinstance(Millisecond(5), float)
-    assert isinstance(Millisecond(5), PintScalar)
+    assert not isinstance(Duration("5 s"), float)
+    assert isinstance(Duration("5 s"), PintQuantity)
 
 
-# --- coercible-union field (the turms-friendly field type) ----------------
+# --- coercible alias field (plain string passthrough; server validates) ----
 
 
-def test_coercible_field_accepts_raw_number_and_coerces():
-    # Model(t=5) type-checks AND coerces to Millisecond at runtime.
-    m = CoercibleModel(t=5)
-    assert isinstance(m.t, Millisecond)
-    assert m.t.magnitude == 5.0
-
-
-def test_coercible_field_accepts_string_and_coerces():
+def test_coercible_field_is_a_plain_string():
+    # The alias is a plain ``str`` — the pint string passes through unchanged for
+    # the server to parse. No client-side coercion to a dimension type.
     m = CoercibleModel(t="2 s")
-    assert isinstance(m.t, Millisecond)
-    assert m.t.magnitude == pytest.approx(2000.0)
+    assert m.t == "2 s"
+    assert isinstance(m.t, str)
 
 
-def test_coercible_field_accepts_quantity_via_scalar_validator():
-    # A real Quantity flows through even though it isn't a union member.
-    m = CoercibleModel(t=pint.Quantity(2, "second"))
-    assert isinstance(m.t, Millisecond)
-    assert m.t.magnitude == pytest.approx(2000.0)
+def test_coercible_field_json_schema_is_a_string():
+    schema = CoercibleModel.model_json_schema()
+    assert schema["properties"]["t"]["type"] == "string"
 
 
 def test_coercible_optional_field_default_and_value():
-    # The optional case that breaks descriptors works with the union.
-    assert CoercibleModel(t=1).opt is None
-    m = CoercibleModel(t=1, opt=3)
-    assert isinstance(m.opt, Millisecond)
-    assert m.opt.magnitude == 3.0
+    assert CoercibleModel(t="1 s").opt is None
+    m = CoercibleModel(t="1 s", opt="3 ms")
+    assert m.opt == "3 ms"
 
 
-def test_coercible_field_serializes_as_float():
-    m = CoercibleModel(t="2 s", opt=3)
-    assert m.model_dump() == {"t": 2000.0, "opt": 3.0}
+def test_coercible_field_serializes_as_pint_string():
+    m = CoercibleModel(t="2 s", opt="3 ms")
+    assert m.model_dump() == {"t": "2 s", "opt": "3 ms"}
 
 
 # --- validate() classmethod -----------------------------------------------
 
 
-def test_validate_from_number():
-    ms = Millisecond.validate(5)
-    assert isinstance(ms, Millisecond)
-    assert ms.magnitude == 5.0
+def test_validate_from_string_preserves_unit():
+    d = Duration.validate("2 s")
+    assert isinstance(d, Duration)
+    assert d.to("second").magnitude == pytest.approx(2.0)
 
 
-def test_validate_from_string_converts_unit():
-    ms = Millisecond.validate("2 s")
-    assert isinstance(ms, Millisecond)
-    assert ms.magnitude == pytest.approx(2000.0)
-
-
-def test_validate_from_other_scalar_converts_unit():
-    ms = Millisecond.validate(Second(1))
-    assert isinstance(ms, Millisecond)
-    assert ms.magnitude == pytest.approx(1000.0)
+def test_validate_from_other_quantity_type():
+    d = Duration.validate(Duration("1 s"))
+    assert isinstance(d, Duration)
+    assert d.to("millisecond").magnitude == pytest.approx(1000.0)
 
 
 def test_validate_from_quantity():
-    ms = Millisecond.validate(pint.Quantity(2, "second"))
-    assert isinstance(ms, Millisecond)
-    assert ms.magnitude == pytest.approx(2000.0)
+    d = Duration.validate(pint.Quantity(2, "second"))
+    assert isinstance(d, Duration)
+    assert d.to("second").magnitude == pytest.approx(2.0)
 
 
-def test_validate_returns_subclass_type():
-    # Each subclass's validate returns its own type, in its own unit.
-    assert isinstance(Second.validate("500 ms"), Second)
-    assert Second.validate("500 ms").magnitude == pytest.approx(0.5)
+def test_validate_rejects_wrong_dimension():
+    with pytest.raises(Exception):
+        Length.validate("2 s")
