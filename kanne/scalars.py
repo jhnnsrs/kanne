@@ -1,4 +1,7 @@
-from typing import Any, Awaitable, Callable, ClassVar, TypeVar, Union
+# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false
+# pint's ``Quantity`` resolves to a partially-unknown generic under strict type
+# checkers, so any annotation referencing it would otherwise be flagged here.
+from typing import Any, Awaitable, Callable, ClassVar, TypeAlias, TypeVar, Union
 
 import pint
 from pydantic import GetCoreSchemaHandler
@@ -12,10 +15,12 @@ _Q = TypeVar("_Q", bound="PintQuantity")
 #: string Pint can parse (``"2 s"``), an existing :class:`pint.Quantity`, or another
 #: :class:`PintQuantity`. A bare number is intentionally *not* coercible — without a
 #: unit it is dimensionless and ambiguous.
-CoercibleValue = Union[str, "pint.Quantity[Any]", "PintQuantity"]  # pyright: ignore[reportUnknownVariableType]
+CoercibleValue: TypeAlias = Union[str, "pint.Quantity[Any]", "PintQuantity"]
 
 
-def _to_quantity(v: Any, cls: "type[PintQuantity]") -> "pint.Quantity[Any]":  # noqa: ANN401
+def _to_quantity(
+    v: Any, cls: "type[PintQuantity]"
+) -> "pint.Quantity[Any]":  # noqa: ANN401
     """Coerce a *coercible* value into a :class:`pint.Quantity` of the dimension
     declared by ``cls``, preserving whatever unit the value carries.
 
@@ -109,8 +114,35 @@ class PintQuantity:
         return self._quantity.to(unit)
 
     def to_pint_string(self) -> str:
-        """Render as an abbreviated pint string (the wire form), e.g. ``"5 ms"``."""
-        return f"{self._quantity:~}"
+        """Render as an abbreviated pint string (the wire form), e.g. ``"5 ms"``.
+
+        This doubles as the Pydantic serializer, so ``self`` is whatever sits in
+        the field at dump time — which is *not* guaranteed to be a coerced
+        :class:`PintQuantity`. Pydantic coerces on construction but not on plain
+        attribute assignment, so a later ``obj.field = 5 * ureg.um`` stores the
+        raw value untouched and it only blows up here. Detect that and raise an
+        explicit error instead of the opaque ``'float' object has no attribute
+        '_quantity'`` that Pint would surface.
+        """
+        if isinstance(self, PintQuantity):
+            return f"{self._quantity:~}"
+        if isinstance(self, pint.Quantity):
+            cause = (
+                f"a raw pint.Quantity ({self!r}) was assigned straight to the "
+                "field. Pydantic only coerces on construction, so a later "
+                "`obj.field = 5 * ureg.um` is stored as-is and never wrapped."
+            )
+        else:
+            cause = (
+                f"a bare {type(self).__name__} ({self!r}) reached the field with "
+                "no unit attached."
+            )
+        raise TypeError(
+            "Cannot serialize a dimension-quantity field: " + cause + " Build the "
+            "value through the field so it gets coerced — pass a unit-bearing "
+            'string ("5 um"), a pint.Quantity, or a unit from kanne.units — or set '
+            "`validate_assignment=True` on the model so assignments are coerced too."
+        )
 
     def __float__(self) -> float:
         return float(self._quantity.magnitude)
@@ -143,7 +175,7 @@ class PintQuantity:
         accepted.
         """
         ser = core_schema.plain_serializer_function_ser_schema(
-            lambda q: q.to_pint_string(),
+            cls.to_pint_string,
             return_schema=core_schema.str_schema(),
             when_used="always",
         )
@@ -371,27 +403,27 @@ class Pressure(PintQuantity):
 # ``pint.Quantity``, which has no Pydantic core schema, so a model field annotated with
 # one would fail to build. Use the dimension type directly as a field type
 # (``exposure: Duration``); its validator already accepts a string and coerces it.
-Coercible = CoercibleValue
+Coercible: TypeAlias = CoercibleValue
 
-DurationCoercible = CoercibleValue
-FrequencyCoercible = CoercibleValue
-LengthCoercible = CoercibleValue
-AreaCoercible = CoercibleValue
-VolumeCoercible = CoercibleValue
-VelocityCoercible = CoercibleValue
-MassCoercible = CoercibleValue
-TemperatureCoercible = CoercibleValue
-AmountOfSubstanceCoercible = CoercibleValue
-ConcentrationCoercible = CoercibleValue
-ElectricCurrentCoercible = CoercibleValue
-ElectricPotentialCoercible = CoercibleValue
-ElectricChargeCoercible = CoercibleValue
-CapacitanceCoercible = CoercibleValue
-ElectricalConductanceCoercible = CoercibleValue
-ElectricalResistanceCoercible = CoercibleValue
-PowerCoercible = CoercibleValue
-EnergyCoercible = CoercibleValue
-PressureCoercible = CoercibleValue
+DurationCoercible: TypeAlias = CoercibleValue
+FrequencyCoercible: TypeAlias = CoercibleValue
+LengthCoercible: TypeAlias = CoercibleValue
+AreaCoercible: TypeAlias = CoercibleValue
+VolumeCoercible: TypeAlias = CoercibleValue
+VelocityCoercible: TypeAlias = CoercibleValue
+MassCoercible: TypeAlias = CoercibleValue
+TemperatureCoercible: TypeAlias = CoercibleValue
+AmountOfSubstanceCoercible: TypeAlias = CoercibleValue
+ConcentrationCoercible: TypeAlias = CoercibleValue
+ElectricCurrentCoercible: TypeAlias = CoercibleValue
+ElectricPotentialCoercible: TypeAlias = CoercibleValue
+ElectricChargeCoercible: TypeAlias = CoercibleValue
+CapacitanceCoercible: TypeAlias = CoercibleValue
+ElectricalConductanceCoercible: TypeAlias = CoercibleValue
+ElectricalResistanceCoercible: TypeAlias = CoercibleValue
+PowerCoercible: TypeAlias = CoercibleValue
+EnergyCoercible: TypeAlias = CoercibleValue
+PressureCoercible: TypeAlias = CoercibleValue
 
 
 # --- Serialization helpers (used by the rath contrib link) ----------------
