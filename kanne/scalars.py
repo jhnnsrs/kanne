@@ -40,6 +40,14 @@ def _to_quantity(
             f"Invalid input for {cls.__name__}: {v!r}. Pass a unit-bearing string "
             f'(e.g. "2 s"), a pint.Quantity, or another PintQuantity — not a bare number.'
         )
+    # Pin the value onto the *current* registry. A quantity built from a different
+    # pint.UnitRegistry may carry unit/dimension definitions that disagree with
+    # ours, and Pint refuses arithmetic across registries — so a foreign quantity
+    # would either break later or have its dimensionality compared unreliably
+    # (the check below uses the current registry's notion of dimensions). Re-express
+    # it here, and fail loudly now if the foreign registry defined the unit
+    # differently — or not at all — instead of letting it slip through.
+    q = _into_current_registry(q, registry, v, cls)
     expected = registry.get_dimensionality(cls.reference_unit)
     if q.dimensionality != expected:
         raise ValueError(
@@ -47,6 +55,34 @@ def _to_quantity(
             f"requires {expected}"
         )
     return q
+
+
+def _into_current_registry(
+    q: "pint.Quantity[Any]",
+    registry: Any,  # noqa: ANN401
+    original: Any,  # noqa: ANN401
+    cls: "type[PintQuantity]",
+) -> "pint.Quantity[Any]":
+    """Re-express ``q`` on ``registry`` if it came from a different one.
+
+    A no-op when ``q`` already belongs to ``registry`` (the common case). Otherwise
+    the unit is re-parsed against the current registry: if that registry defines the
+    unit differently — a mismatched dimensionality is caught by the caller — or does
+    not define it at all, raise an explicit error rather than store a value tied to a
+    foreign registry.
+    """
+    if q._REGISTRY is registry:
+        return q
+    try:
+        return registry.Quantity(q.magnitude, str(q.units))
+    except pint.UndefinedUnitError as e:
+        raise ValueError(
+            f"{original!r} comes from a different pint registry: its unit "
+            f"{str(q.units)!r} is not defined in {cls.__name__}'s registry, so the "
+            "two registries describe units differently. Build the value from the "
+            "current registry — e.g. units from `kanne.units` — rather than a "
+            "separate pint.UnitRegistry()."
+        ) from e
 
 
 def _as_operand(value: Any) -> Any:  # noqa: ANN401

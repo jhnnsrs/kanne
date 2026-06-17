@@ -108,6 +108,31 @@ def test_round_trip_through_json():
     assert again.f == m.f
 
 
+def test_dump_json_emits_pint_strings():
+    import json
+
+    m = Model(t="2 s", f="1 kHz")
+    js = m.model_dump_json()
+    # Every field is a JSON string carrying the (unit-preserved) pint string.
+    assert json.loads(js) == {"t": "2 s", "f": "1 kHz"}
+
+
+def test_json_round_trip_preserves_non_ascii_unit_symbols():
+    # Abbreviated pint symbols include non-ASCII (µ, Ω). They must survive a
+    # JSON encode/decode round-trip intact.
+    class W(BaseModel):
+        d: Length
+
+    with_micro = W(d="2.5 um")
+    js = with_micro.model_dump_json()
+    assert "µm" in js  # serialized with the micro sign, not "um"
+    # The non-ASCII char is real UTF-8, not an \\uXXXX escape.
+    assert "\\u" not in js
+    back = W.model_validate_json(js)
+    assert back.d == with_micro.d
+    assert back.d.to("micrometer").magnitude == pytest.approx(2.5)
+
+
 # --- dimensionful runtime behavior ----------------------------------------
 
 
