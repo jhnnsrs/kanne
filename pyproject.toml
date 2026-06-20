@@ -1,6 +1,6 @@
 [project]
 name = "kanne"
-version = "2.1.1"
+version = "2.2.0"
 description = "a context-aware si-unit registry manager built on pint and pydantic"
 authors = [{ name = "jhnnsrs", email = "jhnnsrs@gmail.com" }]
 requires-python = ">=3.11"
