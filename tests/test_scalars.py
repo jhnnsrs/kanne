@@ -28,6 +28,35 @@ def _registry():
 # --- validation / coercion ------------------------------------------------
 
 
+def test_proposed_units_are_valid_units_of_their_dimension():
+    """Every dimension type's proposed_units must parse and share the type's dimension."""
+    from kanne.registry import get_global_registry
+
+    def _all_types() -> list[type[PintQuantity]]:
+        seen: set[type[PintQuantity]] = set()
+        stack: list[type[PintQuantity]] = [PintQuantity]
+        out: list[type[PintQuantity]] = []
+        while stack:
+            current = stack.pop()
+            for sub in current.__subclasses__():
+                if sub not in seen:
+                    seen.add(sub)
+                    stack.append(sub)
+                    out.append(sub)
+        return out
+
+    registry = get_global_registry()
+    for cls in _all_types():
+        if not cls.reference_unit:
+            continue
+        expected = registry.get_dimensionality(cls.reference_unit)
+        assert cls.proposed_units, f"{cls.__name__} has no proposed_units"
+        for unit in cls.proposed_units:
+            assert registry.get_dimensionality(unit) == expected, (
+                f"{cls.__name__}.proposed_units entry {unit!r} has the wrong dimension"
+            )
+
+
 def test_validates_from_string_preserving_unit():
     m = Model(t="2 s", f="1 kHz")
     assert m.t.to("second").magnitude == pytest.approx(2.0)

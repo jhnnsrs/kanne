@@ -124,6 +124,12 @@ class PintQuantity:
     #: set it. It is NOT a conversion target — values keep the unit they were given.
     reference_unit: ClassVar[str] = ""
 
+    #: Units a UI should offer as a dropdown for this dimension. These are *proposals*,
+    #: not a restriction — any unit of the same dimension remains valid input. Each entry
+    #: must be a pint-parseable unit string of this dimension. Empty means a consumer
+    #: falls back to just :attr:`reference_unit`.
+    proposed_units: ClassVar[tuple[str, ...]] = ()
+
     __slots__ = ("_quantity",)
 
     def __init__(self, value: "CoercibleValue") -> None:
@@ -319,126 +325,147 @@ class Duration(PintQuantity):
     """A quantity of time (``"5 ms"``, ``"2 s"``, ``"1 hour"``)."""
 
     reference_unit = "second"
+    proposed_units = ("ns", "us", "ms", "s")
 
 
 class Frequency(PintQuantity):
     """A quantity of frequency (``"50 Hz"``, ``"1 kHz"``)."""
 
     reference_unit = "hertz"
+    proposed_units = ("Hz", "kHz", "MHz")
 
 
 class Length(PintQuantity):
     """A spatial length (``"2.5 µm"``, ``"1 mm"``, ``"3 m"``)."""
 
     reference_unit = "meter"
+    proposed_units = ("nm", "um", "mm", "m")
 
 
 class Area(PintQuantity):
     """An area (``"4 µm ** 2"``, ``"2 mm^2"``)."""
 
     reference_unit = "meter ** 2"
+    proposed_units = ("um ** 2", "mm ** 2", "m ** 2")
 
 
 class Volume(PintQuantity):
     """A volume (``"5 µL"``, ``"2 mL"``)."""
 
     reference_unit = "liter"
+    proposed_units = ("nL", "uL", "mL", "L")
 
 
 class Velocity(PintQuantity):
     """A velocity / speed (``"3 µm/s"``, ``"2 m/s"``)."""
 
     reference_unit = "meter / second"
+    proposed_units = ("um / s", "mm / s", "m / s")
 
 
 class Mass(PintQuantity):
     """A mass (``"5 mg"``, ``"2 kg"``)."""
 
     reference_unit = "gram"
+    proposed_units = ("ug", "mg", "g", "kg")
 
 
 class Temperature(PintQuantity):
     """A temperature (``"310 K"``, ``"37 degC"``)."""
 
     reference_unit = "kelvin"
+    proposed_units = ("degC", "K")
 
 
 class AmountOfSubstance(PintQuantity):
     """An amount of substance (``"5 mmol"``, ``"2 mol"``)."""
 
     reference_unit = "mole"
+    proposed_units = ("nmol", "umol", "mmol", "mol")
 
 
 class Concentration(PintQuantity):
     """A molar concentration (``"5 nM"``, ``"2 µM"``, ``"1 mM"``)."""
 
     reference_unit = "molar"
+    proposed_units = ("pM", "nM", "uM", "mM", "M")
 
 
 class ElectricCurrent(PintQuantity):
     """An electric current (``"5 pA"``, ``"2 nA"``)."""
 
     reference_unit = "ampere"
+    proposed_units = ("pA", "nA", "uA", "mA", "A")
 
 
 class ElectricPotential(PintQuantity):
     """An electric potential / voltage (``"-70 mV"``, ``"5 V"``)."""
 
     reference_unit = "volt"
+    proposed_units = ("uV", "mV", "V")
 
 
 class ElectricCharge(PintQuantity):
     """An electric charge (``"5 pC"``, ``"2 nC"``)."""
 
     reference_unit = "coulomb"
+    proposed_units = ("pC", "nC", "C")
 
 
 class Capacitance(PintQuantity):
     """A capacitance (``"5 pF"``, ``"100 nF"``)."""
 
     reference_unit = "farad"
+    proposed_units = ("pF", "nF", "uF", "F")
 
 
 class ElectricalConductance(PintQuantity):
     """An electrical conductance (``"5 nS"``, ``"2 µS"``)."""
 
     reference_unit = "siemens"
+    proposed_units = ("nS", "uS", "mS", "S")
 
 
 class ElectricalResistance(PintQuantity):
     """An electrical resistance (``"100 MΩ"``, ``"5 GΩ"``)."""
 
     reference_unit = "ohm"
+    proposed_units = ("ohm", "kiloohm", "megaohm", "gigaohm")
 
 
 class Power(PintQuantity):
     """A power (``"5 mW"``, ``"2 W"``)."""
 
     reference_unit = "watt"
+    proposed_units = ("mW", "W")
 
 
 class Energy(PintQuantity):
     """An energy (``"5 mJ"``, ``"2 J"``)."""
 
     reference_unit = "joule"
+    proposed_units = ("mJ", "J")
 
 
 class Pressure(PintQuantity):
     """A pressure (``"5 kPa"``, ``"2 bar"``)."""
 
     reference_unit = "pascal"
+    proposed_units = ("Pa", "kPa", "bar")
 
 
 class Resistivity(PintQuantity):
     """An axial resistivity (NEURON Ra, ``"35.4 Ω*cm"``, ``"100 Ω*cm"``)."""
 
     reference_unit = "ohm * centimeter"
+    proposed_units = ("ohm * centimeter",)
 
 
 class SpecificCapacitance(PintQuantity):
     """A specific membrane capacitance (NEURON cm, ``"1 µF/cm**2"``)."""
 
     reference_unit = "farad / centimeter ** 2"
+    proposed_units = ("microfarad / centimeter ** 2",)
 
 
 # --- Coercible aliases ----------------------------------------------------
