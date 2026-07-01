@@ -429,6 +429,18 @@ class Pressure(PintQuantity):
     reference_unit = "pascal"
 
 
+class Resistivity(PintQuantity):
+    """An axial resistivity (NEURON Ra, ``"35.4 Ω*cm"``, ``"100 Ω*cm"``)."""
+
+    reference_unit = "ohm * centimeter"
+
+
+class SpecificCapacitance(PintQuantity):
+    """A specific membrane capacitance (NEURON cm, ``"1 µF/cm**2"``)."""
+
+    reference_unit = "farad / centimeter ** 2"
+
+
 # --- Coercible aliases ----------------------------------------------------
 # Stable public names describing what each dimension type accepts as runtime input:
 # a unit-bearing pint string (``"2 s"``), a :class:`pint.Quantity`, or another
@@ -460,6 +472,8 @@ ElectricalResistanceCoercible: TypeAlias = CoercibleValue
 PowerCoercible: TypeAlias = CoercibleValue
 EnergyCoercible: TypeAlias = CoercibleValue
 PressureCoercible: TypeAlias = CoercibleValue
+ResistivityCoercible: TypeAlias = CoercibleValue
+SpecificCapacitanceCoercible: TypeAlias = CoercibleValue
 
 
 # --- Serialization helpers (used by the rath contrib link) ----------------
@@ -497,5 +511,7 @@ DEFAULT_COERCERS: dict[Any, Coercer] = {
         Power,
         Energy,
         Pressure,
+        Resistivity,
+        SpecificCapacitance,
     )
 }

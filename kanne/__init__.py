@@ -23,6 +23,8 @@ from .scalars import (
     Power,
     Energy,
     Pressure,
+    Resistivity,
+    SpecificCapacitance,
     CoercibleValue,
     Coercible,
     DurationCoercible,
@@ -44,6 +46,8 @@ from .scalars import (
     PowerCoercible,
     EnergyCoercible,
     PressureCoercible,
+    ResistivityCoercible,
+    SpecificCapacitanceCoercible,
 )
 from .units import (
     registry,
@@ -94,6 +98,8 @@ __all__ = [
     "Power",
     "Energy",
     "Pressure",
+    "Resistivity",
+    "SpecificCapacitance",
     # coercible input aliases
     "CoercibleValue",
     "Coercible",
@@ -116,6 +122,8 @@ __all__ = [
     "PowerCoercible",
     "EnergyCoercible",
     "PressureCoercible",
+    "ResistivityCoercible",
+    "SpecificCapacitanceCoercible",
     # units registry
     "registry",
     # time
